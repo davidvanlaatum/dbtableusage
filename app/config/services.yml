@@ -1,0 +1,18 @@
+services:
+  processor:
+    class: DBTableUsage\Processor
+    autowire: true
+    lazy: true
+    calls:
+      - [setLog, ['@monolog.logger']]
+  process.command:
+    class: DBTableUsage\Command\ProcessCommand
+    tags:
+      - { name: console.command }
+    calls:
+      - [setProcessor, ['@processor']]
+  binlog.parser:
+    class: DBTableUsage\BinLogParser
+    arguments: ['%mysqlbinlog.path%']
+    autowire: true
+    lazy: true
