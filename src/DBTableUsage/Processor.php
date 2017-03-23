@@ -23,6 +23,9 @@ class Processor implements BinLogParserCallback {
     protected $logs;
     /** @var LoggerInterface */
     protected $log;
+    protected $logPos;
+    protected $events = 0;
+    protected $now;
 
     public function __construct(EntityManagerInterface $em, BinLogParser $parser) {
         $this->em = $em;
@@ -66,12 +69,13 @@ class Processor implements BinLogParserCallback {
         $this->determineLogs();
         foreach ($this->logs as $log) {
             $this->log->notice(sprintf('Processing %s', $log));
-            $this->parser->connect($this->host, $this->username, $this->password, $log);
+            $this->parser->connect($this->host, $this->username, $this->password, $log, $this->logPos);
             try {
                 $this->parser->process($this);
             } finally {
                 $this->parser->disconnect();
             }
+            $this->logPos = null;
         }
     }
 
@@ -106,10 +110,12 @@ class Processor implements BinLogParserCallback {
         $res->execute();
         $this->logs = $res->fetchAll(\PDO::FETCH_COLUMN);
         $this->log->notice(sprintf('Found %d logs', count($this->logs)));
+        if (in_array($this->hostObject->getLogfile(), $this->logs)) {
+            $this->log->notice(sprintf('Skipping ahead to %s', $this->hostObject->getLogfile()));
+            $this->logs = array_splice($this->logs, array_search($this->hostObject->getLogfile(), $this->logs));
+            $this->logPos = $this->hostObject->getLogpos();
+        }
     }
-
-    protected $events = 0;
-    protected $now;
 
     public function processEvent(Event $event) {
         $this->events++;
@@ -125,7 +131,7 @@ class Processor implements BinLogParserCallback {
         $this->hostObject->setLogfile($event->getLogfile());
         $this->hostObject->setLogpos($event->getLogpos());
         if ($this->events % 1000 == 0) {
-            $this->log->notice('Commit to db', ['events' => $this->events, 'now' => $this->now]);
+            $this->log->notice('Commit to db', ['events' => $this->events, 'log' => $event->getLogfile(), 'now' => $this->now, 'logPos' => $event->getLogpos()]);
             $this->em->transactional(function () {
                 $this->hostObject = $this->em->merge($this->hostObject);
                 $this->em->persist($this->hostObject);

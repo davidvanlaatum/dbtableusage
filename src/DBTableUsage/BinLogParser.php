@@ -4,7 +4,6 @@ namespace DBTableUsage;
 use DBTableUsage\Events\Event;
 use DBTableUsage\Events\Insert;
 use DBTableUsage\Events\Set;
-use Doctrine\DBAL\Events;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 use Symfony\Component\Process\ProcessBuilder;
@@ -30,15 +29,20 @@ class BinLogParser {
     }
 
 
-    public function connect($host, $username, $password, $logfile) {
-        $this->process = ProcessBuilder::create([$this->binpath])->add('-R')
+    public function connect($host, $username, $password, $logfile, $logpos) {
+        $builder = ProcessBuilder::create([$this->binpath])->add('-R')
             ->add('-h' . $host)
             ->add('-u' . $username)
             ->add('-p' . $password)
             ->add('-v')
             ->add($logfile)
-            ->setTimeout(null)
-            ->getProcess();
+            ->setTimeout(null);
+
+        if ($logpos) {
+            $builder->add('--start-position=' . $logpos);
+        }
+
+        $this->process = $builder->getProcess();
         $this->log->info('Command line is', [$this->process->getCommandLine()]);
         $this->logfile = $logfile;
         $this->process->start();
