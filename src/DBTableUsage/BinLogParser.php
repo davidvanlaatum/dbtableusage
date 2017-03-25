@@ -4,6 +4,14 @@ namespace DBTableUsage;
 use DBTableUsage\Events\Event;
 use DBTableUsage\Events\Insert;
 use DBTableUsage\Events\Set;
+use Exception;
+use PhpMyAdmin\SqlParser\Parser;
+use PhpMyAdmin\SqlParser\Statements\DeleteStatement;
+use PhpMyAdmin\SqlParser\Statements\InsertStatement;
+use PhpMyAdmin\SqlParser\Statements\ReplaceStatement;
+use PhpMyAdmin\SqlParser\Statements\SetStatement;
+use PhpMyAdmin\SqlParser\Statements\TransactionStatement;
+use PhpMyAdmin\SqlParser\Statements\UpdateStatement;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Process\Process;
 use Symfony\Component\Process\ProcessBuilder;
@@ -70,46 +78,64 @@ class BinLogParser {
         }
     }
 
-    protected function processEvent($data, $logpos, BinLogParserCallback $callback) {
-        $data = preg_replace(['/^###(.*?)$/m', '/^#.*?$/m', '/\/\*.*?\*\n*\//s', '/BINLOG \'.*?\'\;/s'], ['$1', '', '', ''], $data);
-        $data = explode(";", trim($data));
-        $data = array_filter($data, function ($v) {
-            return !empty(trim($v));
-        });
+    protected function processEvent($data, $logPos, BinLogParserCallback $callback) {
+        $len = strlen($data);
+        if ($len > 1024 * 1024) {
+            $this->log->warning('Long event at', [$this->logfile, $logPos, $len]);
+            var_dump($data);
+        }
+        $data = explode("\n", $data);
         $data = array_map(function ($v) {
-            return trim($v);
+            if (strncmp($v, "###", 3) == 0) {
+                $v = substr($v, 4);
+            }
+            if (strncmp($v, "#", 1) == 0) {
+                $v = null;
+            }
+            return $v;
         }, $data);
-        /** @var Event[] $events */
-        $events = [];
-        foreach ($data as $d) {
-            if (strncmp("INSERT", $d, 6) == 0) {
-                $events[] = $this->doInsert($d);
-            } else if (strncmp("SET ", $d, 4) == 0) {
-                $events[] = $this->doSet($d);
-            } else if (in_array($d, ["COMMIT", 'BEGIN', 'DELIMITER'])) {
-                ;
+        $data = implode("\n", $data);
+        while (($pos = strpos($data, '/*')) !== false) {
+            $pos2 = strpos($data, '*/', $pos);
+            if ($pos2) {
+                $data = substr($data, 0, $pos) . substr($data, $pos2 + 2);
             } else {
-//                $this->log->warning('Unknown command', [$logpos, $d]);
+                break;
             }
         }
-        $events = array_filter($events, function ($v) {
-            return $v != null;
-        });
-        if (!empty($events)) {
-            $this->log->debug('Events', $events);
+        /** @var Event[] $events */
+        $events = [];
+        $parser = new Parser($data);
+        foreach ($parser->statements as $statement) {
+            try {
+                if (!($statement instanceof TransactionStatement)) {
+                    $this->log->debug($statement->build(), ['type' => get_class($statement)]);
+                }
+            } catch (Exception $e) {
+                $this->log->error($e->getMessage(), ['type' => get_class($statement)]);
+            }
+            if ($statement instanceof SetStatement) {
+                foreach ($statement->set as $set) {
+                    $events[] = new Set($set);
+                }
+            } else if ($statement instanceof InsertStatement) {
+                $events[] = new Insert($statement);
+            } else if ($statement instanceof ReplaceStatement) {
+            } else if ($statement instanceof DeleteStatement) {
+            } else if ($statement instanceof UpdateStatement) {
+            } else if ($statement instanceof TransactionStatement) {
+                ;
+            } else {
+                $this->log->warning('Unhandled type', ['type' => get_class($statement)]);
+            }
         }
         foreach ($events as $event) {
             $event->setLogfile($this->logfile);
-            $event->setLogpos($logpos);
+            $event->setLogpos($logPos);
             $callback->processEvent($event);
         }
-    }
-
-    private function doInsert($data) {
-        return new Insert($data);
-    }
-
-    private function doSet($data) {
-        return new Set($data);
+        if ($len > 1024 * 1024) {
+            $this->log->warning('Long event at done', [$this->logfile, $logPos, $len]);
+        }
     }
 }

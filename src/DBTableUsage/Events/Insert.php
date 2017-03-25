@@ -1,6 +1,8 @@
 <?php
 namespace DBTableUsage\Events;
 
+use PhpMyAdmin\SqlParser\Statements\InsertStatement;
+
 class Insert extends DataModificationEvent {
 
     protected $fields;
@@ -8,11 +10,9 @@ class Insert extends DataModificationEvent {
     /**
      * Insert constructor.
      */
-    public function __construct($statement) {
-        preg_match('/INSERT INTO (\S+)\.(\S+)\s+SET\s+(.*)/s', $statement, $matches);
-        $this->setDB($matches[1]);
-        $this->setTable($matches[2]);
-        $this->fields = $matches[3];
+    public function __construct(InsertStatement $statement) {
+        $this->setDB($statement->into->dest->database);
+        $this->setTable($statement->into->dest->table);
     }
 
     function __toString() {

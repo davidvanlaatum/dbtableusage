@@ -27,7 +27,9 @@
     "sensio/framework-extra-bundle": "^3.0.2",
     "incenteev/composer-parameter-handler": "^2.0",
     "symfony/framework-bundle": "^3.2",
-    "symfony/process": "^3.2"
+    "symfony/process": "^3.2",
+    "ext-intl": "^1.1",
+    "phpmyadmin/sql-parser": "^4.1"
   },
   "require-dev": {
     "symfony/phpunit-bridge": "^3.0"

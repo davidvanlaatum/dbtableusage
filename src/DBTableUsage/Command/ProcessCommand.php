@@ -41,7 +41,7 @@ class ProcessCommand extends Command {
         if ($input->getOption("host")) {
             $this->processor->setHost($input->getOption("host"));
         }
-        $this->processor->process();
+        $this->processor->process($output);
     }
 
     public function setProcessor(Processor $processor) {

@@ -1,15 +1,16 @@
 <?php
 namespace DBTableUsage\Events;
 
+use PhpMyAdmin\SqlParser\Components\SetOperation;
+
 class Set extends AbstractEvent {
 
     protected $name;
     protected $value;
 
-    public function __construct($data) {
-        preg_match('/SET (\S+)=(.*)/', $data, $matches);
-        $this->name = $matches[1];
-        $this->value = $matches[2];
+    public function __construct(SetOperation $data) {
+        $this->name = $data->column;
+        $this->value = $data->value;
     }
 
     /**
@@ -24,5 +25,10 @@ class Set extends AbstractEvent {
      */
     public function getValue() {
         return $this->value;
+    }
+
+    public function getInt() {
+        $nf = new \NumberFormatter('en', \NumberFormatter::DECIMAL);
+        return $nf->parse($this->getValue(), \NumberFormatter::TYPE_INT64);
     }
 }

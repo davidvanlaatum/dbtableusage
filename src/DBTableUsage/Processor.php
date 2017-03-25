@@ -7,6 +7,8 @@ use DBTableUsage\Events\Event;
 use DBTableUsage\Events\Set;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\Console\Helper\ProgressBar;
+use Symfony\Component\Console\Output\OutputInterface;
 
 class Processor implements BinLogParserCallback {
 
@@ -26,10 +28,13 @@ class Processor implements BinLogParserCallback {
     protected $logPos;
     protected $events = 0;
     protected $now;
+    /** @var ProgressBar */
+    protected $progressBar;
 
     public function __construct(EntityManagerInterface $em, BinLogParser $parser) {
         $this->em = $em;
         $this->parser = $parser;
+        $this->now = new \DateTime();
     }
 
     /**
@@ -60,15 +65,18 @@ class Processor implements BinLogParserCallback {
         $this->password = $password;
     }
 
-    public function process() {
+    public function process(OutputInterface $output) {
         $this->db = new \PDO('mysql:host=' . $this->host, $this->username, $this->password);
         $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         $this->db->setAttribute(\PDO::ATTR_DEFAULT_FETCH_MODE, \PDO::FETCH_ASSOC);
         $this->loadHost();
         $this->loadColumns();
         $this->determineLogs();
-        foreach ($this->logs as $log) {
+        foreach ($this->logs as $log => $size) {
             $this->log->notice(sprintf('Processing %s', $log));
+            $this->progressBar = new ProgressBar($output, $size);
+            $this->progressBar->setFormat('[%bar%] %percent:3s%% %elapsed:6s%/%estimated:-6s% %memory:6s% %current% %events:6s% %logfile% %time%');
+            $this->progressBar->setRedrawFrequency(100000);
             $this->parser->connect($this->host, $this->username, $this->password, $log, $this->logPos);
             try {
                 $this->parser->process($this);
@@ -76,6 +84,7 @@ class Processor implements BinLogParserCallback {
                 $this->parser->disconnect();
             }
             $this->logPos = null;
+            $this->commit();
         }
     }
 
@@ -108,12 +117,15 @@ class Processor implements BinLogParserCallback {
     private function determineLogs() {
         $res = $this->db->prepare("SHOW MASTER LOGS");
         $res->execute();
-        $this->logs = $res->fetchAll(\PDO::FETCH_COLUMN);
-        $this->log->notice(sprintf('Found %d logs', count($this->logs)));
-        if (in_array($this->hostObject->getLogfile(), $this->logs)) {
+        $this->logs = $res->fetchAll(\PDO::FETCH_KEY_PAIR);
+        $index = array_search($this->hostObject->getLogfile(), array_keys($this->logs));
+        $this->log->notice(sprintf('Found %d logs', count($this->logs)), ['file' => $this->hostObject->getLogfile()]);
+        if ($index !== false) {
             $this->log->notice(sprintf('Skipping ahead to %s', $this->hostObject->getLogfile()));
-            $this->logs = array_splice($this->logs, array_search($this->hostObject->getLogfile(), $this->logs));
+            $this->logs = array_splice($this->logs, $index);
             $this->logPos = $this->hostObject->getLogpos();
+        } else if ($this->hostObject->getLogfile()) {
+            $this->log->warning('Have log file but not found so starting from scratch', [array_keys($this->logs)]);
         }
     }
 
@@ -124,18 +136,26 @@ class Processor implements BinLogParserCallback {
             $table = $db->getTable($event->getTable());
             $table->setLastUsed($this->now);
         } else if ($event instanceof Set && $event->getName() == "TIMESTAMP") {
-            $this->now = new \DateTime();
-            $this->now->setTimestamp($event->getValue());
+            $this->now->setTimestamp($event->getInt());
         }
 
         $this->hostObject->setLogfile($event->getLogfile());
         $this->hostObject->setLogpos($event->getLogpos());
-        if ($this->events % 1000 == 0) {
-            $this->log->notice('Commit to db', ['events' => $this->events, 'log' => $event->getLogfile(), 'now' => $this->now, 'logPos' => $event->getLogpos()]);
-            $this->em->transactional(function () {
-                $this->hostObject = $this->em->merge($this->hostObject);
-                $this->em->persist($this->hostObject);
-            });
+        if ($this->events % 10000 == 0) {
+            $this->commit();
         }
+        $this->progressBar->setMessage($event->getLogfile(), 'logfile');
+        $this->progressBar->setMessage($this->now->format(DATE_RFC2822), 'time');
+        $this->progressBar->setMessage($this->events, 'events');
+        $this->progressBar->setProgress($event->getLogpos());
+    }
+
+    protected function commit() {
+        $this->log->debug('Committing', [$this->hostObject->getLogfile(), $this->hostObject->getLogpos()]);
+        $this->em->transactional(function () {
+            $this->hostObject = $this->em->merge($this->hostObject);
+            $this->em->persist($this->hostObject);
+        });
+        gc_collect_cycles();
     }
 }
