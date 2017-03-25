@@ -108,36 +108,40 @@ class BinLogParser {
                 break;
             }
         }
-        /** @var Event[] $events */
-        $events = [];
-        $parser = new Parser($data);
-        foreach ($parser->statements as $statement) {
-            try {
-                if (!($statement instanceof TransactionStatement)) {
-                    $this->log->debug($statement->build(), ['type' => get_class($statement)]);
+        try {
+            /** @var Event[] $events */
+            $events = [];
+            $parser = new Parser($data);
+            foreach ($parser->statements as $statement) {
+                try {
+                    if (!($statement instanceof TransactionStatement)) {
+                        $this->log->debug($statement->build(), ['type' => get_class($statement)]);
+                    }
+                } catch (Exception $e) {
+                    $this->log->error($e->getMessage(), ['type' => get_class($statement)]);
                 }
-            } catch (Exception $e) {
-                $this->log->error($e->getMessage(), ['type' => get_class($statement)]);
-            }
-            if ($statement instanceof SetStatement) {
-                foreach ($statement->set as $set) {
-                    $events[] = new Set($set);
+                if ($statement instanceof SetStatement) {
+                    foreach ($statement->set as $set) {
+                        $events[] = new Set($set);
+                    }
+                } else if ($statement instanceof InsertStatement) {
+                    $events[] = new Insert($statement);
+                } else if ($statement instanceof ReplaceStatement) {
+                } else if ($statement instanceof DeleteStatement) {
+                } else if ($statement instanceof UpdateStatement) {
+                } else if ($statement instanceof TransactionStatement) {
+                    ;
+                } else {
+                    $this->log->warning('Unhandled type', ['type' => get_class($statement)]);
                 }
-            } else if ($statement instanceof InsertStatement) {
-                $events[] = new Insert($statement);
-            } else if ($statement instanceof ReplaceStatement) {
-            } else if ($statement instanceof DeleteStatement) {
-            } else if ($statement instanceof UpdateStatement) {
-            } else if ($statement instanceof TransactionStatement) {
-                ;
-            } else {
-                $this->log->warning('Unhandled type', ['type' => get_class($statement)]);
             }
-        }
-        foreach ($events as $event) {
-            $event->setLogfile($this->logfile);
-            $event->setLogpos($logPos);
-            $callback->processEvent($event);
+            foreach ($events as $event) {
+                $event->setLogfile($this->logfile);
+                $event->setLogpos($logPos);
+                $callback->processEvent($event);
+            }
+        } catch (Exception $e) {
+            $this->log->error(sprintf("Failed to parse event at %s:%d\n", $this->logfile, $logPos) . $data);
         }
         if ($len > 1024 * 1024) {
             $this->log->warning('Long event at done', [$this->logfile, $logPos, $len]);
