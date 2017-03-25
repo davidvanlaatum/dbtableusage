@@ -50,7 +50,9 @@ class BinLogParser {
             $builder->add('--start-position=' . $logpos);
         }
 
+        $builder->add('|')->add('sed')->add('-e')->add('/BINLOG/,/;/d');
         $this->process = $builder->getProcess();
+        $this->process->setCommandLine(str_replace("'|'", '|', $this->process->getCommandLine()));
         $this->log->info('Command line is', [$this->process->getCommandLine()]);
         $this->logfile = $logfile;
         $this->process->start();
@@ -88,6 +90,7 @@ class BinLogParser {
         if ($len > 1024 * 1024) {
             $this->log->warning('Long event at', [$this->logfile, $logPos, $len]);
             var_dump($data);
+            return;
         }
         $data = explode("\n", $data);
         $data = array_map(function ($v) {
@@ -100,14 +103,6 @@ class BinLogParser {
             return $v;
         }, $data);
         $data = implode("\n", $data);
-        while (($pos = strpos($data, '/*')) !== false) {
-            $pos2 = strpos($data, '*/', $pos);
-            if ($pos2) {
-                $data = substr($data, 0, $pos) . substr($data, $pos2 + 2);
-            } else {
-                break;
-            }
-        }
         try {
             /** @var Event[] $events */
             $events = [];
