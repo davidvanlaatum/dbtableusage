@@ -28,7 +28,6 @@ class Set extends AbstractEvent {
     }
 
     public function getInt() {
-        $nf = new \NumberFormatter('en', \NumberFormatter::DECIMAL);
-        return $nf->parse($this->getValue(), \NumberFormatter::TYPE_INT64);
+        return (int)$this->value;
     }
 }
