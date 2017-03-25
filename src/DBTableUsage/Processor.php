@@ -30,6 +30,12 @@ class Processor implements BinLogParserCallback {
     protected $now;
     /** @var ProgressBar */
     protected $progressBar;
+    protected $lastCommitPos;
+    protected $lastCommitTime;
+    /** @var \DateTime */
+    protected $lastCommitTimestamp;
+    protected $speedBytes;
+    protected $speedTime;
 
     public function __construct(EntityManagerInterface $em, BinLogParser $parser) {
         $this->em = $em;
@@ -70,12 +76,12 @@ class Processor implements BinLogParserCallback {
         $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         $this->db->setAttribute(\PDO::ATTR_DEFAULT_FETCH_MODE, \PDO::FETCH_ASSOC);
         $this->loadHost();
-        $this->loadColumns();
+//        $this->loadColumns();
         $this->determineLogs();
         foreach ($this->logs as $log => $size) {
             $this->log->notice(sprintf('Processing %s', $log));
             $this->progressBar = new ProgressBar($output, $size);
-            $this->progressBar->setFormat('[%bar%] %percent:3s%% %elapsed:6s%/%estimated:-6s% %memory:6s% %current% %events:6s% %logfile% %time%');
+            $this->progressBar->setFormat('[%bar%] %percent:3s%% %elapsed:6s%/%estimated:-6s% %memory:6s% %current% %events:6s% %logfile% %time% %speedbytes% %speedtime%');
             $this->progressBar->setRedrawFrequency(100000);
             $this->parser->connect($this->host, $this->username, $this->password, $log, $this->logPos);
             try {
@@ -145,8 +151,10 @@ class Processor implements BinLogParserCallback {
             $this->commit();
         }
         $this->progressBar->setMessage($event->getLogfile(), 'logfile');
-        $this->progressBar->setMessage($this->now->format(DATE_RFC2822), 'time');
+        $this->progressBar->setMessage($this->now->format(DATE_W3C), 'time');
         $this->progressBar->setMessage($this->events, 'events');
+        $this->progressBar->setMessage(sprintf("%.2fKb/s", $this->speedBytes), 'speedbytes');
+        $this->progressBar->setMessage(sprintf("%.2fs/s", $this->speedTime), 'speedtime');
         $this->progressBar->setProgress($event->getLogpos());
     }
 
@@ -156,6 +164,19 @@ class Processor implements BinLogParserCallback {
             $this->hostObject = $this->em->merge($this->hostObject);
             $this->em->persist($this->hostObject);
         });
+        $now = gettimeofday(true);
+        $timediff = $now - $this->lastCommitTime;
+
+        if ($this->lastCommitPos < $this->hostObject->getLogpos()) {
+            $this->speedBytes = ($this->hostObject->getLogpos() - $this->lastCommitPos) / $timediff / 1024.0;
+        }
+        if ($this->lastCommitTimestamp) {
+            $this->speedTime = ($this->now->getTimestamp() - $this->lastCommitTimestamp->getTimestamp()) / $timediff;
+        }
+
+        $this->lastCommitPos = $this->hostObject->getLogpos();
+        $this->lastCommitTime = $now;
+        $this->lastCommitTimestamp = clone $this->now;
         gc_collect_cycles();
     }
 }
