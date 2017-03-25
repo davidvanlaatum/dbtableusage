@@ -13,6 +13,7 @@ use PhpMyAdmin\SqlParser\Statements\SetStatement;
 use PhpMyAdmin\SqlParser\Statements\TransactionStatement;
 use PhpMyAdmin\SqlParser\Statements\UpdateStatement;
 use Psr\Log\LoggerInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Process\Process;
 use Symfony\Component\Process\ProcessBuilder;
 
@@ -58,16 +59,18 @@ class BinLogParser {
         $this->process->start();
     }
 
-    public function process(BinLogParserCallback $callback) {
+    public function process(BinLogParserCallback $callback, OutputInterface $output) {
         $data = null;
         foreach ($this->process->getIterator() as $type => $row) {
             if ($type == 'err') {
                 $this->log->warning($row);
             } else {
                 $data .= $row;
-                while (preg_match('/.*end_log_pos (\d+).*\n/m', $data, $matches, PREG_OFFSET_CAPTURE)) {
-                    $this->processEvent(substr($data, 0, $matches[0][1]), $matches[1][0], $callback);
+                $offset = stripos($data, 'end_log_pos');
+                while (preg_match('/.*end_log_pos (\d+).*\n/m', $data, $matches, PREG_OFFSET_CAPTURE, $offset)) {
+                    $this->processEvent(substr($data, 0, $matches[0][1]), $matches[1][0], $callback, $output);
                     $data = substr($data, $matches[0][1] + strlen($matches[0][0]));
+                    $offset = stripos($data, 'end_log_pos');
                 }
             }
         }
@@ -85,7 +88,7 @@ class BinLogParser {
         }
     }
 
-    protected function processEvent($data, $logPos, BinLogParserCallback $callback) {
+    protected function processEvent($data, $logPos, BinLogParserCallback $callback, OutputInterface $output) {
         $len = strlen($data);
         if ($len > 1024 * 1024) {
             $this->log->warning('Long event at', [$this->logfile, $logPos, $len]);
@@ -108,12 +111,14 @@ class BinLogParser {
             $events = [];
             $parser = new Parser($data);
             foreach ($parser->statements as $statement) {
-                try {
-                    if (!($statement instanceof TransactionStatement)) {
-                        $this->log->debug($statement->build(), ['type' => get_class($statement)]);
+                if ($output->isDebug()) {
+                    try {
+                        if (!($statement instanceof TransactionStatement)) {
+                            $this->log->debug($statement->build(), ['type' => get_class($statement)]);
+                        }
+                    } catch (Exception $e) {
+                        $this->log->error($e->getMessage(), ['type' => get_class($statement)]);
                     }
-                } catch (Exception $e) {
-                    $this->log->error($e->getMessage(), ['type' => get_class($statement)]);
                 }
                 if ($statement instanceof SetStatement) {
                     foreach ($statement->set as $set) {

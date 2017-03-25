@@ -76,7 +76,7 @@ class Processor implements BinLogParserCallback {
         $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         $this->db->setAttribute(\PDO::ATTR_DEFAULT_FETCH_MODE, \PDO::FETCH_ASSOC);
         $this->loadHost();
-//        $this->loadColumns();
+        $this->loadColumns();
         $this->determineLogs();
         foreach ($this->logs as $log => $size) {
             $this->log->notice(sprintf('Processing %s', $log));
@@ -85,7 +85,7 @@ class Processor implements BinLogParserCallback {
             $this->progressBar->setRedrawFrequency(100000);
             $this->parser->connect($this->host, $this->username, $this->password, $log, $this->logPos);
             try {
-                $this->parser->process($this);
+                $this->parser->process($this, $output);
             } finally {
                 $this->parser->disconnect();
             }
