@@ -75,7 +75,10 @@ class BinLogParser {
         $this->log->notice('Shutting down', [$this->process->isRunning()]);
         if ($this->process->isRunning()) {
             $this->process->stop();
+        } else if ($this->process->getExitCode() != 0) {
+            throw new \Exception('mysqlbinlog errored ' . $this->process->getExitCodeText());
         }
+        $this->log->notice('Exited', [$this->process->getExitCode(), $this->process->getExitCodeText()]);
     }
 
     protected function processEvent($data, $logPos, BinLogParserCallback $callback) {
